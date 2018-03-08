@@ -3,6 +3,6 @@ data/
 model/
 my_record_data?/
 run1/
-*.mp4
 my_data/
 __pycache__/
+.vscode/

@@ -144,5 +144,5 @@ All these data was used for training the model with 5 epochs. The data was shuff
 
 ![Training_result][image3]
 
-####4. Result 
+#### 4. Result 
 After training the model, the car is able to autonomously drive around the first track. See this video `video.mp4`.
