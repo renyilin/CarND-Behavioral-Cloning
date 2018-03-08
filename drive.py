@@ -15,6 +15,7 @@ from io import BytesIO
 from keras.models import load_model
 import h5py
 from keras import __version__ as keras_version
+import cv2
 
 sio = socketio.Server()
 app = Flask(__name__)
@@ -44,9 +45,18 @@ class SimplePIController:
 
 
 controller = SimplePIController(0.1, 0.002)
-set_speed = 9
+set_speed = 11
 controller.set_desired(set_speed)
 
+def preprocess_image(img):
+    '''
+    Method for preprocessing images.
+    '''
+    # original shape: 160x320x3, input shape for neural net: 66x200x3
+    # crop to 105x320x3
+    new_img = img[50:140,:,:]
+    new_img = cv2.resize(new_img,(200, 66), interpolation = cv2.INTER_AREA)
+    return new_img
 
 @sio.on('telemetry')
 def telemetry(sid, data):
@@ -61,7 +71,8 @@ def telemetry(sid, data):
         imgString = data["image"]
         image = Image.open(BytesIO(base64.b64decode(imgString)))
         image_array = np.asarray(image)
-        steering_angle = float(model.predict(image_array[None, :, :, :], batch_size=1))
+        img = preprocess_image(image_array)
+        steering_angle = float(model.predict(img[None, :, :, :], batch_size=1))
 
         throttle = controller.update(float(speed))
 

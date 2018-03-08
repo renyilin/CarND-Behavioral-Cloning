@@ -1,145 +1,137 @@
-import numpy as np
-from keras.models import Sequential
-from keras.layers import Flatten, Dense, Lambda, Activation, MaxPooling2D, Dropout, Cropping2D
-from keras.layers.convolutional import Convolution2D
-from keras.optimizers import Adam
 import csv
+from sklearn.model_selection import train_test_split
 import cv2
-import glob
+import numpy as np
+from sklearn.utils import shuffle
+import matplotlib
+matplotlib.use('Agg')
+from matplotlib import pyplot as plt
+from scipy.misc import toimage
+from keras.models import Sequential
+from keras.layers import Flatten, Dense, Lambda, Cropping2D, Dropout, MaxPooling2D, PReLU
+from keras.layers.convolutional import Convolution2D
+from drive import preprocess_image
 
 print('Loading data...')
 lines = []
-with open('data/data/driving_log.csv') as csvfile:
+with open('./my_data/driving_log.csv') as csvfile:
+    has_header = csv.Sniffer().has_header(csvfile.read(1024))
+    csvfile.seek(0)
     reader = csv.reader(csvfile)
+    if has_header:
+        next(reader)  # Skip header row.
     for line in reader:
         lines.append(line)
 
-images = []
-measurements = []
-camPos = ['center', 'left', 'right']
-Corr_factor = 0.2
+train_samples, validation_samples = train_test_split(lines, test_size=0.2)
 
-del(lines[0])
+# Quick Look at the number of data
+print("Number of total Data: ", len(lines))
+print("Number of Training Data: ", len(train_samples))
+print("Number of Validation Data: ", len(validation_samples))
 
-# ['center', 'left', 'right', 'steering', 'throttle', 'brake', 'speed']
-for line in lines:
-    i = 0
-    # Adding center image
-    path0 = line[0]   # center image path
-    filename = path0.split(camPos[i])[-1]  # extract filename(without camPos)
-    path = 'data/data/IMG/center' + filename
-    image = [cv2.imread(path) for path in glob.glob(path)]
-    images.append(image[0])
-    measurement = float(line[3])   # steering angle
-    measurements.append(measurement)
+# Using Generator to load a batch of images
+def generator(samples, batch_size=32):
+    """
+    generate a batch of data.
+    """
+    Corr_factor = 0.25
+    num_samples = len(samples)
+    while 1: 
+        shuffle(samples)
+        for offset in range(0, num_samples, batch_size):
+            batch_samples = samples[offset:offset+(batch_size)]
 
-    # adding left camera
-    # i=1
-    #path0 = line[i]
-    #filename = path0.split(camPos[i])[-1]
-    #path =  'data/data/IMG/left' + filename
-    #image = [cv2.imread(path) for path in glob.glob(path)]
-    # images.append(image[0])
-    #measurement = float(line[3])+Corr_factor
-    # measurements.append(measurement)
+            images = []
+            angles = []
+            for batch_sample in batch_samples:
+                path = './my_data/IMG/'+batch_sample[0].split('/')[-1]
+                center_image = preprocess_image(cv2.imread(path))
+                center_angle = float(batch_sample[3])
+                path = './my_data/IMG/'+batch_sample[1].split('/')[-1]
+                left_image = preprocess_image(cv2.imread(path))
+                left_angle = float(batch_sample[3])+Corr_factor
+                path = './my_data/IMG/'+batch_sample[2].split('/')[-1]
+                right_image = preprocess_image(cv2.imread(path))
+                right_angle = float(batch_sample[3])-Corr_factor
+                images.append(center_image)
+                angles.append(center_angle)
+                images.append(left_image)
+                angles.append(left_angle)
+                images.append(right_image)
+                angles.append(right_angle)
 
-    # adding right camera
-    i = 2
-    path0 = line[i]
-    filename = path0.split(camPos[i])[-1]
-    path = 'data/data/IMG/right' + filename
-    image = [cv2.imread(path) for path in glob.glob(path)]
-    images.append(image[0])
-    measurement = float(line[3])-Corr_factor  # ammend steering angle
-    measurements.append(measurement)
+            # Augment Data by flipping
+            augmented_images, augmented_measurements = [], []
+            for image, measurement in zip(images, angles):
+                augmented_images.append(image)
+                augmented_measurements.append(measurement)
+                augmented_images.append(cv2.flip(image, 1))
+                augmented_measurements.append(measurement*-1.0)
+
+            X_train = np.array(augmented_images)
+            y_train = np.array(augmented_measurements)
+
+            yield shuffle(X_train, y_train)
+
+def get_my_model():
+    model = Sequential()
+    # normalization
+    model.add(Lambda(lambda x: x/127.5 - 1.,
+                     input_shape=(66, 200, 3), output_shape=(66, 200, 3)))
+
+    # convolutional and maxpooling layers
+    model.add(Convolution2D(24, 5, 5, border_mode='valid',
+                            subsample=(2, 2), init='he_normal'))
+    model.add(PReLU())
+    model.add(Convolution2D(36, 5, 5, border_mode='valid',
+                            subsample=(2, 2), init='he_normal'))
+    model.add(PReLU())
+    model.add(Convolution2D(48, 5, 5, border_mode='valid',
+                            subsample=(2, 2), init='he_normal'))
+    model.add(PReLU())
+    model.add(Convolution2D(64, 3, 3, border_mode='same',
+                            subsample=(1, 1), init='he_normal'))
+    model.add(PReLU())
+    model.add(Convolution2D(64, 3, 3, border_mode='same',
+                            subsample=(1, 1), init='he_normal'))
+    model.add(PReLU())
+    model.add(Flatten())
+
+    # fully connected layers
+    model.add(Dense(100, init='he_normal'))
+    model.add(Dropout(0.50))
+    model.add(Dense(50, init='he_normal'))
+    model.add(Dropout(0.50))
+    model.add(Dense(10, init='he_normal'))
+    model.add(Dropout(0.50))
+    model.add(Dense(1))
+	
+    model.summary()
+    model.compile(optimizer='adam', loss="mse")
+    return model
 
 
-##########################
-##########################
+# compile and train the model using the generator function
+train_generator = generator(train_samples, batch_size=32)
+validation_generator = generator(validation_samples, batch_size=32)
 
-# 33
-print()
-# print(filename)
-# print(path)
+model = get_my_model()
+print("Training...")
+history_object = model.fit_generator(train_generator, samples_per_epoch=len(train_samples)*6,
+                                     validation_data=validation_generator,
+                                     nb_val_samples=len(validation_samples), nb_epoch=5)
+model.save('./model_car.h5')
 
-X_train = np.array(images)
-y_train = np.array(measurements)
-print("images dimension:", X_train.shape)
-print("Number of images:", len(X_train))
-print("Number of labels:", len(y_train))
+# print the keys contained in the history object
+print(history_object.history.keys())
 
-# augmentation
-augm_img, augm_y = [], []
-for img, y in zip(images, measurements):
-    augm_img.append(img)
-    augm_y.append(y)
-    augm_img.append(cv2.flip(img, 1))
-    augm_y.append(y*-1.0)
-X_train = np.array(augm_img)
-y_train = np.array(augm_y)
-print("images dimension:", X_train.shape)
-print("Number of images:", len(X_train))
-print("Number of labels:", len(y_train))
-
-# model building
-print('Building the model...')
-crop_top = 50
-crop_bottom = 20
-
-model = Sequential()
-
-# normalizing the input
-model.add(Lambda(lambda x: x / 127.5 - 1.0, input_shape=(160, 320, 3)))
-model.add(Cropping2D(cropping=((crop_top, crop_bottom), (0, 0)),
-                     input_shape=(3, 160, 320)))
-
-# Convolution Layers
-model.add(Convolution2D(24, 5, 5, border_mode='same', subsample=(2, 2)))
-model.add(MaxPooling2D(pool_size=(2, 2), strides=(1, 1)))
-model.add(Activation('relu'))
-
-model.add(Convolution2D(36, 5, 5, border_mode='same', subsample=(2, 2)))
-model.add(MaxPooling2D(pool_size=(2, 2), strides=(1, 1)))
-model.add(Activation('relu'))
-# model.add(Dropout(0.5))
-
-model.add(Convolution2D(48, 5, 5, border_mode='valid', subsample=(2, 2)))
-model.add(MaxPooling2D(pool_size=(2, 2), strides=(1, 1)))
-model.add(Activation('relu'))
-
-model.add(Convolution2D(64, 3, 3, border_mode='valid', subsample=(1, 1)))
-model.add(MaxPooling2D(pool_size=(2, 2), strides=(1, 1)))
-model.add(Activation('relu'))
-
-# Dropout Layer
-model.add(Dropout(0.5))
-
-#model.add(Convolution2D(64, 3, 3, border_mode='valid', subsample=(1, 4)))
-# model.add(Activation('relu'))
-#model.add(MaxPooling2D(pool_size=(2, 2), strides=(1, 2)))
-
-model.add(Flatten())
-
-# Fully connected layers
-model.add(Dense(582))
-model.add(Activation('relu'))
-
-model.add(Dense(50))
-model.add(Activation('relu'))
-
-# model.add(Dense(25))
-# model.add(Activation('relu'))
-
-model.add(Dense(5))
-model.add(Activation('relu'))
-
-model.add(Dense(1))
-
-model.summary()
-
-print('Training...')
-model.compile(optimizer=Adam(0.0001), loss="mse")
-model.fit(X_train, y_train, validation_split=0.2,
-          shuffle=True, epochs=5, verbose=1)
-
-model.save('model.h5')
+# plot the training and validation loss for each epoch
+plt.plot(history_object.history['loss'])
+plt.plot(history_object.history['val_loss'])
+plt.title('Model mean squared error loss')
+plt.ylabel('mean squared error loss')
+plt.xlabel('epoch')
+plt.legend(['training set', 'validation set'], loc='upper right')
+plt.show()
+plt.savefig("./result.jpg")
