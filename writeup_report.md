@@ -104,6 +104,7 @@ Here are some details need to pay attention:
 ```sh
     model.add(Lambda(lambda x: x/127.5 - 1., input_shape=(66, 200, 3))
 ```
+* Use activation PReLU to introduce nonlinearity into the model.  
 
 
 #### 2. Attempts to reduce overfitting in the model
